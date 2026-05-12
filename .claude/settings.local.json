@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell([System.IO.Directory]::GetFileSystemEntries\\(\"C:\\\\Users\\\\Ali\\\\Desktop\\\\go\"\\))"
-    ]
-  }
-}
