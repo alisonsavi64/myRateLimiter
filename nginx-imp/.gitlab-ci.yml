@@ -1,0 +1,109 @@
+stages:
+  - test
+  - build
+  - deploy
+
+# ── GitLab CI Variables (set in Settings → CI/CD → Variables) ────────────────
+# AWS_ACCESS_KEY_ID       Masked  IAM key: ECR push + ssm:SendCommand + ec2:DescribeInstances
+# AWS_SECRET_ACCESS_KEY   Masked  IAM secret
+# AWS_REGION              -       e.g. us-east-1
+# AWS_ACCOUNT_ID          -       12-digit account number
+# EC2_INSTANCE_TAG        -       Value of the "Name" tag on target EC2 instances (e.g. go-app)
+
+variables:
+  IMAGE_APP:   "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/go-app"
+  IMAGE_NGINX: "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/go-app-nginx"
+
+# ── Stage 1: Test ─────────────────────────────────────────────────────────────
+test:
+  stage: test
+  image: golang:1.22-alpine
+  script:
+    - cd ../application
+    - go vet ./...
+    - go test -race -count=1 -timeout=120s ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ── Stage 2: Build + Push to ECR ─────────────────────────────────────────────
+build:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - apk add --no-cache aws-cli
+    - aws ecr get-login-password --region "$AWS_REGION" |
+        docker login --username AWS --password-stdin
+        "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+  script:
+    - docker build -t "$IMAGE_APP:$CI_COMMIT_SHA" -t "$IMAGE_APP:latest" ../application
+    - docker build -t "$IMAGE_NGINX:$CI_COMMIT_SHA" -t "$IMAGE_NGINX:latest" .
+    - docker push "$IMAGE_APP:$CI_COMMIT_SHA"
+    - docker push "$IMAGE_APP:latest"
+    - docker push "$IMAGE_NGINX:$CI_COMMIT_SHA"
+    - docker push "$IMAGE_NGINX:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ── Stage 3: Deploy via SSM Run Command ───────────────────────────────────────
+deploy:
+  stage: deploy
+  image: python:3.12-alpine
+  before_script:
+    - pip install --quiet awscli
+  script:
+    - |
+      COMMAND_ID=$(aws ssm send-command \
+        --region "$AWS_REGION" \
+        --targets "Key=tag:Name,Values=$EC2_INSTANCE_TAG" \
+        --document-name "AWS-RunShellScript" \
+        --comment "Deploy $CI_COMMIT_SHA" \
+        --parameters commands="[
+          \"aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com\",
+          \"docker pull $IMAGE_APP:$CI_COMMIT_SHA\",
+          \"docker pull $IMAGE_NGINX:$CI_COMMIT_SHA\",
+          \"docker tag $IMAGE_APP:$CI_COMMIT_SHA $IMAGE_APP:current\",
+          \"docker tag $IMAGE_NGINX:$CI_COMMIT_SHA $IMAGE_NGINX:current\",
+          \"cd /opt/app && IMAGE_TAG=$CI_COMMIT_SHA docker compose up -d --no-build\"
+        ]" \
+        --output text \
+        --query "Command.CommandId")
+
+      echo "SSM Command ID: $COMMAND_ID"
+
+      INSTANCE_ID=$(aws ec2 describe-instances \
+        --region "$AWS_REGION" \
+        --filters "Name=tag:Name,Values=$EC2_INSTANCE_TAG" "Name=instance-state-name,Values=running" \
+        --query 'Reservations[0].Instances[0].InstanceId' \
+        --output text)
+
+      for i in $(seq 1 30); do
+        STATUS=$(aws ssm get-command-invocation \
+          --region "$AWS_REGION" \
+          --command-id "$COMMAND_ID" \
+          --instance-id "$INSTANCE_ID" \
+          --query 'Status' --output text 2>/dev/null || echo "Pending")
+        echo "[$i/30] Status: $STATUS"
+        if [ "$STATUS" = "Success" ]; then exit 0; fi
+        if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "TimedOut" ] || [ "$STATUS" = "Cancelled" ]; then
+          echo "Deployment failed with status: $STATUS"
+          exit 1
+        fi
+        sleep 10
+      done
+
+      echo "Timed out waiting for SSM command to complete"
+      exit 1
+  environment:
+    name: production
+  needs:
+    - job: build
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "main"'

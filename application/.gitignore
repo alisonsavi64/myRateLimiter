@@ -34,3 +34,15 @@ go.work.sum
 
 # Local Docker overrides
 docker-compose.override.yml
+
+# Terraform
+nginx-imp/terraform/.terraform/
+nginx-imp/terraform/.terraform.lock.hcl
+nginx-imp/terraform/terraform.tfstate
+nginx-imp/terraform/terraform.tfstate.backup
+nginx-imp/terraform/*.tfvars
+!nginx-imp/terraform/*.tfvars.example
+
+# Redis runtime data
+nginx-imp/redis/*.aof
+nginx-imp/redis/*.rdb
