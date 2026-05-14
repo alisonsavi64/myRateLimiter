@@ -1,0 +1,56 @@
+service: lambda-rate-limiter
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: us-east-1
+  environment:
+    REDIS_HOST: ${env:REDIS_HOST, 'redis-master'}
+    REDIS_PORT: ${env:REDIS_PORT, '6379'}
+    RATE_LIMIT_BASIC: ${env:RATE_LIMIT_BASIC, '60'}
+    RATE_LIMIT_PREMIUM: ${env:RATE_LIMIT_PREMIUM, '600'}
+
+plugins:
+  - serverless-esbuild
+  - serverless-offline
+
+custom:
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: false
+    target: node22
+    exclude:
+      - '@aws-sdk/*'
+  serverless-offline:
+    host: 0.0.0.0
+    httpPort: 3000
+    noPrependStageInUrl: true
+    # NOTE: When rate limited, serverless-offline returns 403 (not 429).
+    # In production, a Gateway Response mapping converts ACCESS_DENIED → 429.
+    # Both indicate "blocked" — the test script accepts either.
+
+functions:
+  authorizer:
+    handler: src/handler.authorizer
+
+  echo:
+    handler: src/echo.handler
+    events:
+      - http:
+          path: /
+          method: any
+          authorizer:
+            name: authorizer
+            type: REQUEST
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization
+      - http:
+          path: /{proxy+}
+          method: any
+          authorizer:
+            name: authorizer
+            type: REQUEST
+            resultTtlInSeconds: 0
+            identitySource: method.request.header.Authorization

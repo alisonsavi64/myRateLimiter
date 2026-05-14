@@ -4,11 +4,10 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 COPY go.mod ./
-RUN go mod download
-
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN go mod tidy && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o /app/server .
 
 # Stage 2: Final image

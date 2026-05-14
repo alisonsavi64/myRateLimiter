@@ -20,10 +20,19 @@ services:
     restart: unless-stopped
     environment:
       TZ: UTC
+      PORT: "8080"
+      UPSTREAM_URL: ""
+      REDIS_MODE: sentinel
+      SENTINEL_HOST_1: sentinel-1
+      SENTINEL_HOST_2: sentinel-2
+      SENTINEL_HOST_3: sentinel-3
+      SENTINEL_MASTER_NAME: mymaster
+      RATE_LIMIT_BASIC: "60"
+      RATE_LIMIT_PREMIUM: "600"
     networks:
       - app-net
-    expose:
-      - "8080"
+    ports:
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 15s
@@ -33,6 +42,12 @@ services:
     depends_on:
       redis-master:
         condition: service_healthy
+      sentinel-1:
+        condition: service_started
+      sentinel-2:
+        condition: service_started
+      sentinel-3:
+        condition: service_started
 
   # ── OpenResty / Nginx (rate limiter) ──────────────────────────────────
   nginx:
@@ -176,6 +191,26 @@ services:
       - app-net
     expose:
       - "26379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+
+  # ── Lambda Authorizer (serverless-offline) ───────────────────────────
+  lambda-offline:
+    build:
+      context: ../lambda
+      dockerfile: Dockerfile.offline
+    container_name: lambda-offline
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      REDIS_HOST: redis-master
+      REDIS_PORT: "6379"
+      RATE_LIMIT_BASIC: "60"
+      RATE_LIMIT_PREMIUM: "600"
+    networks:
+      - app-net
     depends_on:
       redis-master:
         condition: service_healthy

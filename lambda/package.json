@@ -1,0 +1,21 @@
+{
+  "name": "lambda-rate-limiter",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "offline": "serverless offline",
+    "build": "tsup src/handler.ts src/echo.ts --format cjs --out-dir dist --no-splitting"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.149",
+    "@types/node": "^22.0.0",
+    "serverless": "^3.40.0",
+    "serverless-esbuild": "^1.52.1",
+    "serverless-offline": "^13.9.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.8.0"
+  }
+}

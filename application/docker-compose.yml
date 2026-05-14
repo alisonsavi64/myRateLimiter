@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: go-app
+    container_name: go-app-dev
     ports:
       - "8080:8080"
     restart: unless-stopped
